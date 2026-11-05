@@ -1,2 +1,3 @@
 # Collected market data and local database
 data/
+__pycache__/

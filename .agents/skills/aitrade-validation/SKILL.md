@@ -5,7 +5,7 @@ description: Validate and reproduce the aitrade BTC/JPY data collection, CSV exp
 
 # aitrade の動作確認
 
-1. リポジトリのルートで [README.md](../../../README.md) と対象スクリプトを読み、Python 3.11 以上を使う。公開APIを呼べるか確認し、取得できない場合はエラーを記録する。既存の `data/` に重要なファイルがある場合は、別の作業ツリーで実行する。
+1. リポジトリのルートで [README.md](../../../../README.md) と対象スクリプトを読み、Python 3.11 以上を使う。公開APIを呼べるか確認し、取得できない場合はエラーを記録する。既存の `data/` に重要なファイルがある場合は、別の作業ツリーで実行する。
 2. 次のコマンドを POSIX シェルで実行する。直近の完了日を日本時間で選ぶ。調査対象日が指定されていれば、その日付を使う。
 
 ```sh

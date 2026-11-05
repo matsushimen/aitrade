@@ -28,7 +28,11 @@ The date is JST in `YYYYMMDD` format. If omitted, the current JST date is used.
 
 The collector saves:
 
-- Raw API response: `data/raw/bitbank/btc_jpy/5min/YYYYMMDD.json`
+- Raw API responses: `data/raw/bitbank/btc_jpy/5min/YYYYMMDD.json`
+  (filenames use the API's UTC dates). Each requested JST day requires the
+  previous and same UTC date; only candles within the requested JST day are
+  inserted into SQLite. Existing raw files and database rows remain compatible;
+  rerun collection for previously collected JST days to fill their missing hours.
 - Normalized candles: `data/aitrade.sqlite3`
 
 Rerunning for the same date updates matching timestamps instead of duplicating rows. A candle that has not yet closed is excluded.
@@ -76,3 +80,83 @@ through the stop, in which case it uses the open plus adverse slippage.
 ## Safety
 
 This repository is for research and paper trading. The collector uses public market data only. It does not submit orders or access exchange account credentials.
+
+## Roadmap implementation
+
+Trading conditions, stage status and limitations are documented in
+[docs/trading-plan.md](docs/trading-plan.md). Validated Decimal settings live in
+[config/baseline.json](config/baseline.json). All examples below use simulated
+funds; the cost assumptions are not a verified exchange fee schedule.
+
+Use configuration (existing explicit fee/slippage CLI flags still override it):
+
+```sh
+python3 scripts/backtest_baseline.py data/btc_jpy_5min.csv --config config/baseline.json
+```
+
+Export separate chronological development and holdout periods, then evaluate:
+
+```sh
+python3 scripts/evaluate.py --development data/development.csv --holdout data/holdout.csv --config config/baseline.json > data/evaluation.json
+```
+
+Generate a classification with an **OpenAI-compatible Chat Completions endpoint**.
+Configure the provider key in the execution environment; never commit it or put
+its value in command arguments. Specify the provider's model and API base URL,
+including its version path:
+
+```sh
+python3 scripts/llm_assist.py --db data/aitrade.sqlite3 --base-url https://llm.example/v1 --api-key-env LLM_API_KEY --model provider-model --response-format json_object --output data/llm_decisions.jsonl
+python3 scripts/evaluate.py --development data/development.csv --holdout data/holdout.csv --config config/baseline.json --decisions data/llm_decisions.jsonl > data/llm_comparison.json
+```
+
+Replace the example URL and model with your provider's values. `--base-url`
+defaults to `OPENAI_BASE_URL`, then `https://api.openai.com/v1` for compatibility
+with existing commands. `--api-key-env` defaults to `OPENAI_API_KEY`; a custom
+variable never falls back to another key. Use `--no-auth` for a local endpoint
+that needs no authentication. HTTP is supported for local deployments; use
+HTTPS for remote connections.
+
+Choose `--response-format json_schema` (default) for Structured Outputs,
+`json_object` for JSON mode, or `text` to omit the API's `response_format` field.
+Every mode still requires the same strict local JSON validation. Unsupported
+modes fail explicitly; the client does not silently retry in a different mode.
+
+Classification must be run periodically while collecting data; the command above
+runs once. Decisions generated today cannot be applied to yesterday's trades.
+Missing, stale or risk-off decisions block new entries in assisted mode. Historical
+knowledge in a model also prevents treating retrospective generation as unseen
+market research. Collect decisions prospectively before evaluating their effect.
+
+Persistent candle replay (completed days only; restart safely with the same input):
+
+```sh
+python3 scripts/paper_trade.py --csv data/btc_jpy_5min.csv --config config/baseline.json --state data/paper_replay.json
+```
+
+Optional delayed-candle polling from a JST start date:
+
+```sh
+python3 scripts/paper_trade.py --start 20261105 --collect --watch --config config/baseline.json --state data/paper_delayed.json
+```
+
+Real-time paper fills at observed public bid/ask (one poll by default; `--watch`
+keeps polling; no exchange credentials or real orders):
+
+```sh
+python3 scripts/paper_quotes.py --collect --watch --config config/baseline.json --state data/paper_quotes.json
+python3 scripts/paper_quotes.py --state data/paper_quotes.json --config config/baseline.json --halt
+python3 scripts/paper_quotes.py --state data/paper_quotes.json --replay
+```
+
+To enable the LLM entry veto, add `--decisions data/llm_decisions.jsonl` to the
+quote command and use a **new** state file. Keep collection and classification
+running to supply fresh decisions. A stop request persists even if the quote
+request fails; liquidation needs a fresh quote. Ctrl-C exits the process and
+preserves state; it does not request liquidation. Run the halt command to do that.
+
+Validation:
+
+```sh
+python3 -m unittest discover -s tests -v
+```

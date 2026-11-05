@@ -1,0 +1,15 @@
+{
+  "pair": "btc_jpy",
+  "timeframe": "5min",
+  "starting_cash_jpy": "10000",
+  "max_position_jpy": "5000",
+  "trade_risk_jpy": "100",
+  "daily_loss_jpy": "200",
+  "stop_fraction": "0.02",
+  "fee_bps": "15",
+  "spread_bps": "0",
+  "slippage_bps": "5",
+  "fast_window": 12,
+  "slow_window": 36,
+  "max_feed_age_seconds": 90
+}

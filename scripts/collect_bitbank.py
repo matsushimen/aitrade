@@ -8,7 +8,7 @@ import json
 import sqlite3
 import sys
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time as day_time, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -100,34 +100,48 @@ def main() -> int:
     args = parser.parse_args()
 
     target_date = args.date or datetime.now(JST).date()
+    if target_date > datetime.now(JST).date():
+        parser.error("--date must not be after today in JST.")
     date_text = target_date.strftime("%Y%m%d")
-    url = f"{BASE_URL}/{PAIR}/candlestick/{TIMEFRAME}/{date_text}"
+    start = datetime.combine(target_date, day_time.min, JST)
+    end = start + timedelta(days=1)
+    start_ms = int(start.timestamp()) * 1000
+    end_ms = int(end.timestamp()) * 1000
 
     raw_dir = ROOT / "data" / "raw" / "bitbank" / PAIR / TIMEFRAME
     raw_dir.mkdir(parents=True, exist_ok=True)
-    raw_path = raw_dir / f"{date_text}.json"
 
     db_path = ROOT / "data" / "aitrade.sqlite3"
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        payload = fetch_json(url)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-        print(f"Failed to fetch API data: {exc}", file=sys.stderr)
-        return 1
-
-    if payload.get("success") != 1:
-        print(f"API returned an error: {payload}", file=sys.stderr)
-        return 1
-
-    raw_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    # bitbank partitions intraday candles by UTC date, not JST date.
+    payloads = []
+    raw_paths = []
+    for api_date in (start.astimezone(timezone.utc).date(),
+                     (end - timedelta(milliseconds=1)).astimezone(timezone.utc).date()):
+        if api_date > datetime.now(timezone.utc).date():
+            continue
+        api_date_text = api_date.strftime("%Y%m%d")
+        url = f"{BASE_URL}/{PAIR}/candlestick/{TIMEFRAME}/{api_date_text}"
+        try:
+            payload = fetch_json(url)
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            print(f"Failed to fetch API data ({url}): {exc}", file=sys.stderr)
+            return 1
+        if payload.get("success") != 1:
+            print(f"API returned an error ({url}): {payload}", file=sys.stderr)
+            return 1
+        raw_path = raw_dir / f"{api_date_text}.json"
+        raw_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        raw_paths.append(raw_path)
+        payloads.append(payload)
 
     fetched_at = datetime.now(timezone.utc).isoformat()
     now_ms = int(time.time() * 1000)
-    candle_groups = payload.get("data", {}).get("candlestick", [])
+    candle_groups = [group for payload in payloads
+                     for group in payload.get("data", {}).get("candlestick", [])]
 
     rows: list[tuple] = []
     for group in candle_groups:
@@ -135,11 +149,18 @@ def main() -> int:
             continue
 
         for item in group.get("ohlcv", []):
-            if len(item) != 6:
-                continue
+            if not isinstance(item, list) or len(item) != 6:
+                print(f"Invalid API candle: {item!r}", file=sys.stderr)
+                return 1
 
             open_price, high, low, close, volume, timestamp = item
-            open_time_ms = int(timestamp)
+            if type(timestamp) is not int or timestamp % BAR_MS:
+                print(f"Invalid API timestamp: {timestamp!r}", file=sys.stderr)
+                return 1
+            open_time_ms = timestamp
+
+            if not start_ms <= open_time_ms < end_ms:
+                continue
 
             # Do not store a candle that has not closed yet.
             if open_time_ms + BAR_MS > now_ms:
@@ -159,6 +180,14 @@ def main() -> int:
                     fetched_at,
                 )
             )
+
+    from export_candles import validate_candles
+    try:
+        normalized = sorted((row[3], *row[4:9]) for row in rows)
+        validate_candles(normalized, start_ms, min(end_ms, now_ms // BAR_MS * BAR_MS))
+    except ValueError as exc:
+        print(f"Invalid API candles: {exc}; database was not updated.", file=sys.stderr)
+        return 1
 
     with sqlite3.connect(db_path) as connection:
         ensure_schema(connection)
@@ -184,7 +213,7 @@ def main() -> int:
 
     print(
         f"{date_text}: saved {len(rows)} closed candles.\n"
-        f"Raw response: {raw_path.relative_to(ROOT)}\n"
+        f"Raw responses: {', '.join(str(path.relative_to(ROOT)) for path in raw_paths)}\n"
         f"SQLite DB:    {db_path.relative_to(ROOT)}"
     )
     return 0
