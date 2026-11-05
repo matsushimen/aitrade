@@ -1,4 +1,7 @@
 import sys
+import contextlib
+import io
+from unittest.mock import patch
 import tempfile
 import unittest
 from dataclasses import replace
@@ -7,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from collect_bitbank import BAR_MS
-from paper_quotes import apply_quote, quote_data, replay, request_halt
+from paper_quotes import apply_quote, live_decisions, quote_data, replay, request_halt
 from paper_trade import atomic_json
 from trading_config import TradingConfig
 from test_trading import START, candles
@@ -49,6 +52,14 @@ class QuotePaperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_quote(state,revised,self.payload(self.timestamp+1000),self.config,self.timestamp+1000)
 
+    def test_revision_of_older_sma_candle_is_also_rejected(self):
+        state=apply_quote(None,self.rows,self.payload(),self.config,self.timestamp)
+        revised=list(self.rows)
+        revised[0]=(revised[0][0],'101','101','101','101','1')
+        with self.assertRaisesRegex(ValueError,'candle changed'):
+            apply_quote(state,revised,self.payload(self.timestamp+1000),self.config,self.timestamp+1000)
+        self.assertEqual(replay(state),state)
+
     def test_late_and_llm_missing_signal_skips(self):
         late=self.timestamp+100000
         state=apply_quote(None,self.rows,self.payload(late),self.config,late)
@@ -57,6 +68,24 @@ class QuotePaperTests(unittest.TestCase):
         blocked=apply_quote(None,self.rows,self.payload(),self.config,self.timestamp,decisions={})
         self.assertEqual(D(blocked['quantity_btc']),0)
         self.assertEqual(replay(blocked),blocked)
+
+    def test_missing_llm_log_blocks_buys_without_blocking_stop(self):
+        from llm_assist import PROMPT_HASH
+        decision={'asof_ms':START,'available_ms':START+BAR_MS,'regime':'neutral',
+                  'summary':'fixture','model':'fixture','prompt_sha256':PROMPT_HASH}
+        state=apply_quote(None,self.rows,self.payload(),self.config,self.timestamp,
+                          decisions={START:decision})
+        self.assertGreater(D(state['quantity_btc']),0)
+        with patch('paper_quotes.load_decisions',side_effect=ValueError('bad JSON')), contextlib.redirect_stderr(io.StringIO()):
+            gate=live_decisions(Path('unused.jsonl'))
+        self.assertEqual(gate,{})
+        stopped=apply_quote(state,self.rows,self.payload(self.timestamp+2000,bid='90',ask='91'),
+                            self.config,self.timestamp+2000,decisions=gate)
+        self.assertEqual(stopped['trades'][0]['exit_reason'],'stop_observed_quote')
+        self.assertEqual(D(stopped['quantity_btc']),0)
+        self.assertEqual(replay(stopped),stopped)
+        fresh=apply_quote(None,self.rows,self.payload(),self.config,self.timestamp,decisions=gate)
+        self.assertEqual(D(fresh['quantity_btc']),0)
 
     def test_halt_persists_and_exits_at_next_fresh_quote(self):
         state=apply_quote(None,self.rows,self.payload(),self.config,self.timestamp)

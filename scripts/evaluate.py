@@ -1,5 +1,6 @@
 """Evaluate disjoint chronological development/holdout data at identical costs."""
 import argparse
+import csv
 import hashlib
 import json
 import sys
@@ -41,7 +42,7 @@ def main():
         result['provenance'] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
                                 for p in (args.development, args.holdout, args.config, args.decisions) if p}
         print(json.dumps(result, indent=2, ensure_ascii=False))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, OverflowError, csv.Error) as exc:
         print(f'Evaluation failed: {exc}', file=sys.stderr)
         return 1
     return 0

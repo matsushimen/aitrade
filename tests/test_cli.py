@@ -31,10 +31,18 @@ class CLITests(unittest.TestCase):
 
     def test_all_commands_have_help(self):
         for script in sorted(SCRIPTS.glob('*.py')):
-            if script.name == 'trading_config.py':
+            if script.name in ('trading_config.py', 'storage.py'):
                 continue
             with self.subTest(script=script.name):
                 self.assertIn('usage:', self.run_cli(script.name, '--help').stdout)
+
+    def test_evaluation_rejects_malformed_csv_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'malformed.csv'
+            path.write_text('open_time_ms,open,high,low,close,volume\n"unterminated\n',encoding='utf-8')
+            result=self.run_cli('evaluate.py','--development',path,'--holdout',path,ok=False)
+            self.assertIn('Evaluation failed:',result.stderr)
+            self.assertNotIn('Traceback',result.stderr)
 
     def test_export_backtest_evaluate_and_restart(self):
         sys.path.insert(0, str(SCRIPTS))
