@@ -33,6 +33,21 @@ The collector saves:
 
 Rerunning for the same date updates matching timestamps instead of duplicating rows. A candle that has not yet closed is excluded.
 
+## Export data for a backtest
+
+Collect each day in the desired period, then export the stored candles:
+
+```sh
+python3 scripts/collect_bitbank.py --date 20261105
+python3 scripts/export_candles.py --start 20261105 --end 20261105 --output data/btc_jpy_5min.csv
+```
+
+Both dates are inclusive JST calendar dates. Only completed days are accepted.
+The CSV contains the candle start time in Unix milliseconds and OHLCV values,
+sorted by timestamp. A complete day has 288 candles. If a timestamp is missing
+or the stored OHLCV is invalid, the command exits with an error without
+replacing the output file. Missing candles are not filled in.
+
 ## Safety
 
 This repository is for research and paper trading. The collector uses public market data only. It does not submit orders or access exchange account credentials.
