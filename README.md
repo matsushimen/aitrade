@@ -48,6 +48,31 @@ sorted by timestamp. A complete day has 288 candles. If a timestamp is missing
 or the stored OHLCV is invalid, the command exits with an error without
 replacing the output file. Missing candles are not filled in.
 
+## Run the baseline backtest
+
+```sh
+python3 scripts/backtest_baseline.py data/btc_jpy_5min.csv --fee-bps 15 --slippage-bps 5
+```
+
+The command prints a JSON report with the net P&L, drawdown measured at candle
+closes, and individual simulated trades. The example cost inputs are
+illustrative and are not bitbank's fee schedule. Both are per side; one basis
+point is 0.01%. Use the slippage input for estimated execution friction,
+including spread if you have no bid/ask history.
+
+This baseline compares the 12- and 36-candle simple moving averages. Signals
+from a closed candle can execute at the next candle's open. It models one
+long spot position, exits by the 23:55 JST bar open, and starts with JPY 10,000.
+Position size is capped at JPY 5,000 including entry costs, and is sized to
+target at most JPY 100 of modeled loss at a 2% stop. New entries are disabled
+once realized daily losses reach JPY 200. Gaps can cause fills beyond a stop,
+so the configured limits do not guarantee maximum losses.
+
+The simulator uses OHLCV and fixed costs; it does not model order book depth,
+partial fills or exchange minimum order sizes. A stop touched inside a bar
+is modeled at the stop price plus adverse slippage unless the bar opened
+through the stop, in which case it uses the open plus adverse slippage.
+
 ## Safety
 
 This repository is for research and paper trading. The collector uses public market data only. It does not submit orders or access exchange account credentials.
