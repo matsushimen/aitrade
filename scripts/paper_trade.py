@@ -7,34 +7,18 @@ import argparse
 import csv
 import fcntl
 import json
-import os
 import sqlite3
 import subprocess
 import sys
 import time
 from datetime import datetime, time as day_time, timedelta
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 
 from backtest_baseline import BASIS_POINTS, load_candles, run_backtest
 from collect_bitbank import BAR_MS, JST, ROOT, parse_date
 from export_candles import read_candles, validate_candles
 from trading_config import TradingConfig
-
-
-def atomic_json(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        try:
-            json.dump(value, stream, indent=2, ensure_ascii=False)
-            stream.write('\n')
-            stream.flush()
-            os.fsync(stream.fileno())
-            stream.close()
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
+from storage import atomic_json, require_state
 
 
 def advance(path, rows, config, *, halt=False, now_ms=None, start_ms=None):
@@ -44,6 +28,9 @@ def advance(path, rows, config, *, halt=False, now_ms=None, start_ms=None):
     with path.with_suffix(path.suffix+'.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         state = json.loads(path.read_text()) if path.exists() else None
+        if state is not None:
+            require_state(state, 'delayed_completed_ohlcv',
+                          ('config', 'start_ms', 'candles', 'halt_from_ms', 'observed_at_ms', 'report'))
         if state and state['config'] != config.to_dict():
             raise ValueError('Configuration changed; use a new paper state.')
         if state and start_ms is not None and state['start_ms'] != start_ms:

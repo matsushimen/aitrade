@@ -13,8 +13,27 @@ from pathlib import Path
 from collect_bitbank import BAR_MS, BASE_URL, JST, ROOT, fetch_json
 from export_candles import read_candles, validate_candles
 from llm_assist import load_decisions, select_decision
-from paper_trade import atomic_json
+from storage import atomic_json, require_state
 from trading_config import TradingConfig
+
+
+def validate_quote_state(state):
+    require_state(state, 'observed_bid_ask', (
+        'config', 'llm_enabled', 'observations', 'cash_jpy', 'quantity_btc',
+        'entry_cost_jpy', 'entry_ms', 'entry_session', 'stop_price_jpy',
+        'session', 'session_pnl_jpy', 'peak_equity_jpy', 'max_drawdown_jpy',
+        'halted', 'last_signal_ms', 'events', 'trades', 'last_quote_ms', 'last_candle'))
+
+
+def live_decisions(path):
+    if path is None:
+        return None
+    try:
+        return load_decisions(path)
+    except (OSError, ValueError) as exc:
+        # Keep exits/stop processing active; an empty gate forbids new buys.
+        print(f'LLM decisions unavailable; new entries blocked: {exc}', file=sys.stderr)
+        return {}
 
 
 def quote_data(payload, now_ms, config):
@@ -34,6 +53,8 @@ def quote_data(payload, now_ms, config):
 
 
 def apply_quote(state, rows, payload, config, now_ms, decisions=None):
+    if state is not None:
+        validate_quote_state(state)
     timestamp, bid, ask = quote_data(payload, now_ms, config)
     end_ms = timestamp//BAR_MS*BAR_MS
     if len(rows) < config.slow_window+1:
@@ -55,9 +76,12 @@ def apply_quote(state, rows, payload, config, now_ms, decisions=None):
         'peak_equity_jpy': str(config.starting_cash_jpy), 'max_drawdown_jpy': '0',
         'halted': False, 'last_signal_ms': None, 'events': [], 'trades': [],
         'last_quote_ms': 0, 'last_candle': None}
-    # Reject revisions of the last signal candle while it is still in the window.
+    # Check the whole overlapping SMA window, not just the last signal candle.
+    previous_rows = next((entry['rows'] for entry in reversed(state['observations'])
+                          if entry['rows'] is not None), [])
+    previous_by_time = {row[0]: list(row) for row in previous_rows}
     for row in rows:
-        if state['last_candle'] is not None and row[0] == state['last_candle'][0] and list(row) != state['last_candle']:
+        if row[0] in previous_by_time and list(row) != previous_by_time[row[0]]:
             raise ValueError('Previously observed signal candle changed.')
     bar_time = datetime.fromtimestamp(timestamp/1000,JST)
     session = bar_time.date().isoformat()
@@ -98,7 +122,7 @@ def apply_quote(state, rows, payload, config, now_ms, decisions=None):
         pnl=proceeds-entry_cost
         cash+=proceeds
         state['session_pnl_jpy']=str(D(state['session_pnl_jpy'])+pnl)
-        fill=event('fill_sell',exit_reason,quantity_btc=str(quantity),cash_flow_jpy=str(proceeds),pnl_jpy=str(pnl))
+        event('fill_sell',exit_reason,quantity_btc=str(quantity),cash_flow_jpy=str(proceeds),pnl_jpy=str(pnl))
         state['trades'].append({'entry_ms':state['entry_ms'],'exit_ms':timestamp,'exit_reason':exit_reason,'pnl_jpy':str(pnl)})
         quantity=D(0)
     if new_signal and signal==1 and quantity==0 and exit_reason is None:
@@ -135,6 +159,7 @@ def apply_quote(state, rows, payload, config, now_ms, decisions=None):
 
 def replay(state):
     """Reproduce paper fills using only saved quotes, candles, and decisions."""
+    validate_quote_state(state)
     config=TradingConfig.from_dict(state['config'])
     result=None
     rows=None
@@ -157,6 +182,7 @@ def request_halt(path, config):
     with path.with_suffix(path.suffix+'.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
         state=json.loads(path.read_text())
+        validate_quote_state(state)
         if state['config'] != config.to_dict():
             raise ValueError('Configuration changed.')
         state['halted']=True
@@ -205,7 +231,7 @@ def main():
                 refreshed_end=end_ms
             rows=read_candles(args.db,end_ms-(config.slow_window+1)*BAR_MS,end_ms)
             now_ms=int(time.time()*1000)
-            decisions=load_decisions(args.decisions) if args.decisions else None
+            decisions=live_decisions(args.decisions)
             with args.state.with_suffix(args.state.suffix+'.lock').open('a') as lock:
                 fcntl.flock(lock,fcntl.LOCK_EX)
                 old=json.loads(args.state.read_text()) if args.state.exists() else None

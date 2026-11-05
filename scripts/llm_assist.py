@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from collect_bitbank import BAR_MS
+from storage import atomic_text, locked_path
 
 PROMPT = ('Classify only the supplied completed BTC/JPY candles. Return exactly a JSON '
           'object with regime (risk_on, neutral, risk_off) and summary (at most 500 characters). '
@@ -78,6 +79,31 @@ def request_body(model, rows, response_format):
     return body
 
 
+def classify_and_save(path, rows, url, model, response_format, key=None):
+    # Hold the writer lock through the request so concurrent invocations do
+    # not pay for and append multiple classifications of the same candle.
+    with locked_path(path):
+        existing = load_decisions(path) if path.exists() else {}
+        if rows[-1][0] in existing:
+            raise ValueError('Output already contains this input timestamp; no model call was made.')
+        headers = {'Content-Type': 'application/json'}
+        if key:
+            headers['Authorization'] = f'Bearer {key}'
+        request = Request(url,
+            data=json.dumps(request_body(model, rows, response_format)).encode(),
+            headers=headers)
+        with urlopen(request, timeout=45) as response:
+            result = json.load(response)
+        output = json.loads(result['choices'][0]['message']['content'])
+        if not isinstance(output, dict) or set(output) != {'regime', 'summary'}:
+            raise ValueError('Unexpected model output.')
+        item = validate_decision(dict(output, asof_ms=rows[-1][0], available_ms=int(time.time()*1000), model=model, prompt_sha256=PROMPT_HASH))
+        original = path.read_text(encoding='utf-8') if path.exists() else ''
+        separator = '\n' if original and not original.endswith('\n') else ''
+        atomic_text(path, original + separator + json.dumps(item, ensure_ascii=False) + '\n')
+    return item
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('csv', type=Path, nargs='?')
@@ -110,25 +136,7 @@ def main():
             validate_candles(rows,end_ms-36*BAR_MS,end_ms)
         if rows[-1][0] + BAR_MS > int(time.time() * 1000):
             raise ValueError('Input contains unclosed candles.')
-        headers = {'Content-Type': 'application/json'}
-        if key:
-            headers['Authorization'] = f'Bearer {key}'
-        request = Request(url,
-            data=json.dumps(request_body(args.model, rows, args.response_format)).encode(),
-            headers=headers)
-        with urlopen(request, timeout=45) as response:
-            result = json.load(response)
-        output = json.loads(result['choices'][0]['message']['content'])
-        if not isinstance(output, dict) or set(output) != {'regime', 'summary'}:
-            raise ValueError('Unexpected model output.')
-        item = validate_decision(dict(output, asof_ms=rows[-1][0], available_ms=int(time.time()*1000), model=args.model, prompt_sha256=PROMPT_HASH))
-        # Record real receipt time: historical generation is never backdated.
-        existing = load_decisions(args.output) if args.output.exists() else {}
-        if item['asof_ms'] in existing:
-            raise ValueError('Output already contains this input timestamp.')
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        with args.output.open('a', encoding='utf-8') as stream:
-            stream.write(json.dumps(item, ensure_ascii=False)+'\n')
+        item = classify_and_save(args.output, rows, url, args.model, args.response_format, key)
         print(json.dumps(item, ensure_ascii=False))
     except (OSError, ValueError, KeyError, IndexError, TypeError, sqlite3.Error) as exc:
         print(f'LLM classification failed: {exc}', file=sys.stderr)

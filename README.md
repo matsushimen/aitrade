@@ -124,7 +124,12 @@ modes fail explicitly; the client does not silently retry in a different mode.
 
 Classification must be run periodically while collecting data; the command above
 runs once. Decisions generated today cannot be applied to yesterday's trades.
-Missing, stale or risk-off decisions block new entries in assisted mode. Historical
+Missing, stale or risk-off decisions block new entries in assisted mode.
+Decision logs use writer locks and atomic replacement. Concurrent classification
+of the same candle makes only one API request when the first result is saved
+successfully; a duplicate is rejected before another request. A failed write
+preserves the previous log. In live quote paper mode, an unavailable or invalid
+LLM log blocks new buys while stop and exit processing continues. Historical
 knowledge in a model also prevents treating retrospective generation as unseen
 market research. Collect decisions prospectively before evaluating their effect.
 
