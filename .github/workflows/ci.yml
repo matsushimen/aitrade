@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: ['main', 'ci/**']
+  pull_request:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  required:
+    name: Required checks
+    if: always()
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every check to pass
+        env:
+          RESULT: ${{ needs.checks.result }}
+        run: test "$RESULT" = success
+
+  distribution:
+    name: Source distribution
+    needs: required
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build source archive and checksum
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz --prefix=aitrade/ --output=dist/aitrade.tar.gz HEAD
+          cd dist
+          sha256sum aitrade.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aitrade-source-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

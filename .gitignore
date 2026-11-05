@@ -1,3 +1,5 @@
 # Collected market data and local database
 data/
 __pycache__/
+dist/
+.ruff_cache/

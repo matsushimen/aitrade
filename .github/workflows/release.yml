@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  release:
+    name: Draft source release
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate version and main ancestry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor HEAD origin/main
+      - name: Build release archive
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz --prefix="aitrade-$TAG/" --output="dist/aitrade-$TAG.tar.gz" HEAD
+          cd dist
+          sha256sum "aitrade-$TAG.tar.gz" > SHA256SUMS
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" "dist/aitrade-$TAG.tar.gz" dist/SHA256SUMS --verify-tag --draft --generate-notes --title "$TAG"
