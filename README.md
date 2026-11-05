@@ -160,3 +160,13 @@ Validation:
 ```sh
 python3 -m unittest discover -s tests -v
 ```
+
+## CI/CD
+
+[![CI](https://github.com/matsushimen/aitrade/actions/workflows/ci.yml/badge.svg)](https://github.com/matsushimen/aitrade/actions/workflows/ci.yml)
+
+Pull requests and main pushes run offline tests on Python 3.11–3.14, static
+checks and configuration validation. Successful main builds deliver a source
+archive with a checksum; version tags prepare a draft GitHub Release.
+See [CI/CD operations](docs/ci-cd.md) for local checks, release commands and
+branch protection setup. No trading process is deployed automatically.
