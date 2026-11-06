@@ -175,3 +175,11 @@ checks and configuration validation. Successful main builds deliver a source
 archive with a checksum; version tags prepare a draft GitHub Release.
 See [CI/CD operations](docs/ci-cd.md) for local checks, release commands and
 branch protection setup. No trading process is deployed automatically.
+
+## Run on your Linux machine
+
+For Garuda Linux, see [the migration and systemd guide](docs/garuda-linux.md).
+User services in `deploy/systemd/` separate collection, LLM classification and
+baseline/assisted paper trading. Credentials stay in an external environment
+file; service restart and journal logging are included. Setup is performed on
+your machine, and no real orders are enabled.

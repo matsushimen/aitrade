@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect recent bitbank candles for aitrade
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/aitrade
+ExecStart=%h/aitrade/.venv/bin/python %h/aitrade/scripts/linux_service.py collect
+TimeoutStartSec=300
+UMask=0077
+NoNewPrivileges=true
+Environment=PYTHONUNBUFFERED=1

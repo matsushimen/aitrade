@@ -1,0 +1,13 @@
+[Unit]
+Description=Classify completed aitrade candles using the configured LLM
+After=aitrade-collect.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/aitrade
+EnvironmentFile=%h/.config/aitrade/llm.env
+ExecStart=%h/aitrade/.venv/bin/python %h/aitrade/scripts/linux_service.py classify
+TimeoutStartSec=120
+UMask=0077
+NoNewPrivileges=true
+Environment=PYTHONUNBUFFERED=1

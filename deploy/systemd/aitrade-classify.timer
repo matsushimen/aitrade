@@ -1,0 +1,12 @@
+[Unit]
+Description=Record aitrade LLM decisions every five minutes
+
+[Timer]
+OnBootSec=60s
+OnCalendar=*-*-* *:00/5:40
+Persistent=true
+AccuracySec=1s
+Unit=aitrade-classify.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=aitrade observed-quote paper trader (%i)
+Wants=aitrade-collect.service
+After=aitrade-collect.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/aitrade
+ExecStart=%h/aitrade/.venv/bin/python %h/aitrade/scripts/linux_service.py %i
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

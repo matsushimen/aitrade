@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh aitrade candles every five minutes
+
+[Timer]
+OnBootSec=20s
+OnCalendar=*-*-* *:00/5:10
+Persistent=true
+AccuracySec=1s
+Unit=aitrade-collect.service
+
+[Install]
+WantedBy=timers.target
